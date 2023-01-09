@@ -34,6 +34,9 @@ pub(crate) use shared_fd::SharedFd;
 mod socket;
 pub(crate) use socket::Socket;
 
+mod statx;
+pub(crate) use statx::StatxFlags;
+
 mod unlink_at;
 
 mod util;

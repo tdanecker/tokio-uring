@@ -1,7 +1,7 @@
 use crate::buf::fixed::FixedBuf;
 use crate::buf::{BoundedBuf, BoundedBufMut, IoBuf, IoBufMut, Slice};
 use crate::fs::OpenOptions;
-use crate::io::SharedFd;
+use crate::io::{SharedFd, StatxFlags};
 
 use crate::runtime::driver::op::Op;
 use std::fmt;
@@ -56,6 +56,39 @@ use std::path::Path;
 pub struct File {
     /// Open file descriptor
     fd: SharedFd,
+}
+
+/// Metadata information about a file.
+///
+/// This structure is returned from the [`metadata`] or [`symlink_metadata`] function or method
+/// and represents known metadata about a file such as file type or size.
+pub struct Metadata(pub(crate) Box<libc::statx>);
+
+/// The file type
+///
+/// When the file type returned from [`DirEntry::file_type`] is [`Unknown`], use a call to [`Dir::metadata`] to retrieve the actual file type.
+///
+/// [`DirEntry::file_type`]: fs::directory::DirEntry::file_type
+/// [`Unknown`]: FileType::Unknown
+#[derive(Copy, Clone, Eq, PartialEq)]
+#[repr(u8)]
+pub enum FileType {
+    /// The file type is not known
+    Unknown = libc::DT_UNKNOWN,
+    /// FIFO
+    Fifo = libc::DT_FIFO,
+    /// character device
+    CharDevice = libc::DT_CHR,
+    /// directory
+    Dir = libc::DT_DIR,
+    /// block device
+    BlockDevice = libc::DT_BLK,
+    /// regular file
+    File = libc::DT_REG,
+    /// symbolic link
+    Symlink = libc::DT_LNK,
+    /// socket
+    Socket = libc::DT_SOCK,
 }
 
 impl File {
@@ -703,6 +736,29 @@ impl File {
         (Ok(()), buf.into_inner())
     }
 
+    /// Queries metadata about the underlying file.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use tokio_uring::fs::File;
+    ///
+    /// fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     tokio_uring::start(async {
+    ///         let f = File::open("foo.txt").await?;
+    ///         let metadata = f.metadata().await?;
+    ///         println!("size: {}", metadata.len());
+    ///
+    ///         // Close the file
+    ///         f.close().await?;
+    ///         Ok(())
+    ///     })
+    /// }
+    /// ```
+    pub async fn metadata(&self) -> io::Result<Metadata> {
+        Ok(Metadata(Op::statx(Some(&self.fd), Path::new(""), StatxFlags::NONE)?.await?))
+    }
+
     /// Attempts to sync all OS-internal metadata to disk.
     ///
     /// This function will attempt to ensure that all in-memory data reaches the
@@ -862,4 +918,96 @@ pub async fn remove_file<P: AsRef<Path>>(path: P) -> io::Result<()> {
 /// ```
 pub async fn rename(from: impl AsRef<Path>, to: impl AsRef<Path>) -> io::Result<()> {
     Op::rename_at(from.as_ref(), to.as_ref(), 0)?.await
+}
+
+/// Given a path, query the file system to get information about a file, directory, etc.
+///
+/// This function will traverse symbolic links to query information about the destination file.
+///
+/// # Examples
+///
+/// ```no_run
+/// use tokio_uring::fs;
+///
+/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     tokio_uring::start(async {
+///         let metadata = fs::metadata("foo.txt").await?;
+///         Ok::<(), std::io::Error>(())
+///     })?;
+///     Ok(())
+/// }
+/// ```
+pub async fn metadata(path: impl AsRef<Path>) -> io::Result<Metadata> {
+    Ok(Metadata(Op::statx(None, path.as_ref(), StatxFlags::NONE)?.await?))
+}
+
+/// Query the metadata about a file without following symlinks.
+///
+/// # Examples
+///
+/// ```no_run
+/// use tokio_uring::fs;
+///
+/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     tokio_uring::start(async {
+///         let metadata = fs::symlink_metadata("foo.txt").await?;
+///         println!("{:?}", metadata.file_type());
+///         Ok::<(), std::io::Error>(())
+///     })?;
+///     Ok(())
+/// }
+/// ```
+pub async fn symlink_metadata(path: impl AsRef<Path>) -> io::Result<Metadata> {
+    Ok(Metadata(Op::statx(None, path.as_ref(), StatxFlags::SYMLINK_NOFOLLOW)?.await?))
+}
+
+impl Metadata {
+    /// Returns the file type for this metadata.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use tokio_uring::fs;
+    ///
+    /// fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     tokio_uring::start(async {
+    ///         let metadata = fs::symlink_metadata("foo.txt").await?;
+    ///         println!("{:?}", metadata.file_type());
+    ///         Ok::<(), std::io::Error>(())
+    ///     })?;
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn file_type(&self) -> FileType {
+        match (self.0.stx_mode as u32 & libc::S_IFMT) as libc::mode_t {
+            libc::S_IFIFO => FileType::Fifo,
+            libc::S_IFCHR => FileType::CharDevice,
+            libc::S_IFDIR => FileType::Dir,
+            libc::S_IFBLK => FileType::BlockDevice,
+            libc::S_IFREG => FileType::File,
+            libc::S_IFLNK => FileType::Symlink,
+            libc::S_IFSOCK => FileType::Socket,
+            _ => FileType::Unknown,
+        }
+    }
+
+    /// Returns the size of the file, in bytes, this metadata is for.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use tokio_uring::fs;
+    ///
+    /// fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     tokio_uring::start(async {
+    ///         let metadata = fs::symlink_metadata("foo.txt").await?;
+    ///         println!("size: {}", metadata.len());
+    ///         Ok::<(), std::io::Error>(())
+    ///     })?;
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn len(&self) -> u64 {
+        self.0.stx_size
+    }
 }
