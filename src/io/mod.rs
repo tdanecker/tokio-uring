@@ -7,6 +7,9 @@ mod connect;
 
 mod fsync;
 
+mod getdents;
+pub(crate) use getdents::Getdents;
+
 mod mkdir_at;
 
 mod noop;

@@ -3,6 +3,8 @@
 mod directory;
 pub use directory::create_dir;
 pub use directory::remove_dir;
+pub use directory::Dir;
+pub use directory::DirEntry;
 
 mod file;
 pub use file::remove_file;
