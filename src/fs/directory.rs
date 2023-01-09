@@ -1,6 +1,6 @@
 use crate::fs::OpenOptions;
 use crate::fs::file::{Metadata, FileType};
-use crate::io::{Getdents, SharedFd};
+use crate::io::{Getdents, SharedFd, StatxFlags};
 use crate::runtime::driver::op::Op;
 use std::ffi::{CStr, OsStr, OsString};
 use std::io;
@@ -133,6 +133,37 @@ impl Dir {
                 &OpenOptions::new().read(true).custom_flags(libc::O_DIRECTORY),
             )?.await?
         ))
+    }
+
+    /// Query the metadata about a directory entry without following symlinks.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use tokio_uring::fs::Dir;
+    ///
+    /// fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     tokio_uring::start(async {
+    ///         // Open a directory
+    ///         let mut dir = Dir::open(".").await?;
+    ///
+    ///         // Read directory entries
+    ///         while let Some(result) = dir.next().await {
+    ///             let entry = result?;
+    ///             // Retrieve metadata for the entry
+    ///             let metadata = dir.metadata(&entry).await?;
+    ///             println!("entry: {}, size: {}", entry.file_name(), metadata.len())
+    ///         }
+    ///
+    ///         // Close the directory
+    ///         dir.close().await?;
+    ///
+    ///         Ok(())
+    ///     })
+    /// }
+    /// ```
+    pub async fn metadata(&self, entry: &DirEntry) -> io::Result<Metadata> {
+        Ok(Metadata(Op::statx(Some(&self.fd), Path::new(entry.file_name()), StatxFlags::SYMLINK_NOFOLLOW)?.await?))
     }
 
     /// Closes the directory.
