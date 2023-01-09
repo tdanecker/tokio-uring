@@ -333,7 +333,7 @@ impl OpenOptions {
     /// [`Other`]: io::ErrorKind::Other
     /// [`PermissionDenied`]: io::ErrorKind::PermissionDenied
     pub async fn open(&self, path: impl AsRef<Path>) -> io::Result<File> {
-        Op::open(path.as_ref(), self)?.await
+        Ok(File::from_shared_fd(Op::open(path.as_ref(), self)?.await?))
     }
 
     pub(crate) fn access_mode(&self) -> io::Result<libc::c_int> {

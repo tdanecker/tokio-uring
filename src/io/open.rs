@@ -1,4 +1,4 @@
-use crate::fs::{File, OpenOptions};
+use crate::fs::OpenOptions;
 use crate::io::SharedFd;
 
 use crate::runtime::driver::op::{Completable, CqeResult, Op};
@@ -43,9 +43,9 @@ impl Op<Open> {
 }
 
 impl Completable for Open {
-    type Output = io::Result<File>;
+    type Output = io::Result<SharedFd>;
 
     fn complete(self, cqe: CqeResult) -> Self::Output {
-        Ok(File::from_shared_fd(SharedFd::new(cqe.result? as _)))
+        Ok(SharedFd::new(cqe.result? as _))
     }
 }
